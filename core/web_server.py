@@ -173,7 +173,7 @@ class DashboardServer:
             if not self._verify_auth(authorization):
                 raise HTTPException(status_code=401, detail="Unauthorized")
 
-            valid_commands = {"pause", "kill", "reconcile", "reset_risk", "derisk"}
+            valid_commands = {"pause", "kill", "reconcile", "reset_risk", "derisk", "shutdown"}
             if command_name not in valid_commands:
                 raise HTTPException(status_code=400, detail=f"Unknown command: {command_name}")
 

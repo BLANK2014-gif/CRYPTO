@@ -280,6 +280,26 @@ class TradingBot:
         self._dashboard.start()
         time.sleep(1)  # Let dashboard start
 
+        # Autolaunch browser dashboard if requested
+        if os.environ.get("AUTOLAUNCH_BROWSER", "0") in ("1", "true", "True"):
+            dash_host = self._config.secrets.dashboard_host
+            host_for_url = "localhost" if dash_host in ("0.0.0.0", "") else dash_host
+            dash_url = f"http://{host_for_url}:{self._config.secrets.dashboard_port}"
+            logger.info("Auto-launching dashboard in default browser: %s", dash_url)
+            import webbrowser
+            threading.Thread(
+                target=lambda: (time.sleep(1.2), webbrowser.open(dash_url)),
+                daemon=True,
+            ).start()
+
+        # Record PID for process control & graceful shutdown scripts
+        try:
+            os.makedirs("state", exist_ok=True)
+            with open("state/bot.pid", "w", encoding="utf-8") as f:
+                f.write(str(os.getpid()))
+        except Exception as exc:
+            logger.debug("Failed to write PID file: %s", exc)
+
         # 13. Determine mode
         is_dry = self._config.system.dry_run
         is_live = self._config.secrets.live_trading_enabled
@@ -331,6 +351,16 @@ class TradingBot:
         logger.info("Trading loop started — interval=%ds", poll_interval)
 
         while self._running:
+            # Check for external stop signal file
+            if os.path.exists("state/stop.flag"):
+                logger.info("Graceful shutdown requested via state/stop.flag")
+                try:
+                    os.remove("state/stop.flag")
+                except OSError:
+                    pass
+                self._running = False
+                break
+
             loop_start = time.monotonic()
             self._loop_count += 1
 
@@ -522,6 +552,13 @@ class TradingBot:
         if self._dashboard:
             self._dashboard.stop()
 
+        # Clean up PID file
+        try:
+            if os.path.exists("state/bot.pid"):
+                os.remove("state/bot.pid")
+        except OSError:
+            pass
+
         logger.info("Shutdown complete")
 
     # =======================================================================
@@ -643,6 +680,11 @@ class TradingBot:
                 self._executor.cancel_all_orders()
             self._audit.record(EventType.DERISK, {})
             return {"success": True, "state": "DERISKED"}
+
+        elif command == "shutdown":
+            logger.info("Graceful shutdown requested via operator command")
+            self._running = False
+            return {"success": True, "state": "SHUTTING_DOWN"}
 
         return {"success": False, "error": f"Unknown command: {command}"}
 

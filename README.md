@@ -226,13 +226,33 @@ The project features a full test suite covering API client, technical indicators
 ```bash
 python -m pytest tests/ -v
 ```
-*Expected: 55 passed.*
+*Expected: 69 passed.*
 
 ### Run Competition Pre-Flight Check
 Verifies exchange network reachability, millisecond clock skew, directory permissions, and configuration:
 
 ```bash
 python scripts/preflight_check.py
+```
+
+---
+
+## 1-Click Launch & Operator Controls
+
+### Windows (1-Click Desktop Launch)
+* **Start with Autolaunched Dashboard**: Double-click `start_bot.bat`. This initializes Python, activates the environment, begins autonomous trading, and automatically opens the live telemetry dashboard at `http://localhost:8080`.
+* **Graceful Stop**: Double-click `stop_bot.bat` (or click **STOP BOT** in the web dashboard header, or press `Ctrl+C` in the console). It finishes the active iteration, reconciles the exchange ledger, serializes portfolio state to disk, seals the SHA-256 audit chain, and exits cleanly.
+
+### Linux / AWS EC2
+```bash
+# Make scripts executable
+chmod +x start_bot.sh stop_bot.sh
+
+# Start bot with autolaunch flag
+./start_bot.sh
+
+# Graceful stop from another terminal or daemon control
+./stop_bot.sh
 ```
 
 ---
@@ -255,7 +275,7 @@ nano .env
 # Run pre-flight check
 python scripts/preflight_check.py
 
-# Launch trading bot
+# Launch trading bot (or double-click start_bot.bat)
 python main.py
 ```
 

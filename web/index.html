@@ -312,6 +312,7 @@ tr:hover td { background: var(--bg-card-hover); }
         <button class="btn" onclick="sendCommand('reset_risk')">🔓 RESET RISK</button>
         <button class="btn btn-danger" onclick="sendCommand('derisk')">⚠ DERISK</button>
         <button class="btn btn-danger" onclick="if(confirm('KILL SWITCH — This cannot be undone. Proceed?'))sendCommand('kill')">☠ KILL</button>
+        <button class="btn btn-danger" style="border-color:#f43f5e;" onclick="if(confirm('STOP BOT — Gracefully save state, seal audit trail, and shut down?'))sendCommand('shutdown')">🛑 STOP BOT</button>
       </div>
     </div>
   </div>
