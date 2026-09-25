@@ -1,0 +1,87 @@
+# =============================================================================
+# Roostoo Trading Bot — Master Configuration
+# =============================================================================
+# All tunable parameters in one place. No magic constants in code.
+# =============================================================================
+
+# --- Exchange ---
+exchange:
+  base_url: "https://mock-api.roostoo.com"
+  initial_portfolio_value: 100000.0
+
+# --- Symbols ---
+symbols:
+  - "BTC/USD"
+  - "ETH/USD"
+
+# --- Timeframes ---
+timeframes:
+  primary: "5m"           # 300 seconds
+  confirmation: "15m"     # 900 seconds
+
+# --- Polling ---
+system:
+  dry_run: true
+  polling_interval_seconds: 15    # ticker poll interval
+  candle_build_interval: 300      # 5 minutes in seconds
+  max_data_age_seconds: 120       # stale data threshold
+  time_sync_tolerance_ms: 30000   # max clock drift vs server
+
+# --- Risk Management ---
+risk:
+  risk_per_trade_pct: 0.01        # 1% of equity per trade
+  max_positions: 4
+  max_gross_exposure_pct: 0.60    # 60% of equity
+  min_cash_reserve_pct: 0.30      # keep ≥30% in cash
+  max_drawdown_pct: 0.08          # 8% max drawdown → freeze
+  rolling_24h_drawdown_pct: 0.05  # 5% rolling 24h drawdown → freeze
+  strategy_drawdown_pct: 0.04     # 4% per-strategy drawdown
+  max_spread_bps: 50              # reject trade if spread > 50 bps
+  stop_alternative_pct: 0.005     # 0.5% fallback stop distance
+  allow_shorting: true            # set false for spot-only competition rounds
+
+# --- Execution ---
+execution:
+  maker_fee: 0.0005       # 0.05%
+  taker_fee: 0.0010        # 0.10%
+  prefer_maker: true
+  limit_order_timeout_seconds: 120   # cancel unfilled limit after 2 min
+  max_slippage_pct: 0.002            # 0.2% max acceptable slippage
+
+# --- Strategies ---
+strategies:
+  value_area:
+    enabled: true
+    min_confidence: 0.70
+    vah_reclaim_candles: 3        # look-back for VAH/VAL reclaim
+    volume_profile_periods: 48    # number of candles for VP calc
+    tp1_scale_out_pct: 0.50       # 50% at TP1 (POC)
+  liquidity_sweep:
+    enabled: true
+    min_confidence: 0.75
+    swing_lookback: 20            # candles to identify swings
+    displacement_min_body_pct: 0.60  # body ≥60% of range
+    fvg_min_gap_pct: 0.001        # minimum FVG gap
+    tp1_rr: 2.0                   # risk:reward for TP1
+  strategy_c:
+    enabled: false                # extensibility placeholder
+
+# --- Signal Aggregation ---
+signals:
+  min_confidence_to_trade: 0.65
+  conflict_threshold: 0.30       # reject if opposing signal > this
+  no_trade_volatility_percentile: 95  # too volatile → NO_TRADE
+
+# --- Rate Limiting ---
+rate_limit:
+  max_requests_per_minute: 30
+  max_order_requests_per_minute: 10
+  backoff_base_seconds: 1.0
+  backoff_max_seconds: 60.0
+  backoff_multiplier: 2.0
+
+# --- Dashboard ---
+dashboard:
+  enabled: true
+  ws_broadcast_interval: 1.0     # seconds between WS pushes
+  rest_fallback_interval: 2.0    # REST poll interval for frontend
