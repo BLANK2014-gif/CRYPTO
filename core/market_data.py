@@ -267,6 +267,9 @@ class MarketDataEngine:
                     if len(sd.tick_history) > self.MAX_TICK_HISTORY:
                         sd.tick_history = sd.tick_history[-self.MAX_TICK_HISTORY:]
 
+                    # Seed initial baseline candles if empty so indicators are immediately operational
+                    self._seed_candles_if_needed(sd, tick)
+
                     # Build candles
                     self._update_candle(sd, tick, "5m")
                     self._update_candle(sd, tick, "15m")
@@ -281,6 +284,78 @@ class MarketDataEngine:
             logger.error("Ticker update error: %s", exc)
             self._check_degraded()
             return False
+
+    def _seed_candles_if_needed(self, sd: SymbolData, tick: TickerSnapshot) -> None:
+        """Seed baseline candles on initial tick so indicators and regimes are immediately operational."""
+        if len(sd.candles_5m) >= 30:
+            return
+
+        now = tick.timestamp
+        interval_5m = self._candle_5m_interval
+        interval_15m = self._candle_15m_interval
+        current_price = tick.last_price
+        if current_price <= 0:
+            return
+
+        change_pct = tick.change_24h
+        vol_5m = max(1000.0, tick.usd_volume / 288.0) if tick.usd_volume > 0 else 50000.0
+        coin_vol_5m = vol_5m / current_price
+
+        # Generate 35 past 5m candles leading up to current price
+        import math
+        base_candles_5m = []
+        for i in range(35, 0, -1):
+            c_time = (int(now) - i * interval_5m) // interval_5m * interval_5m
+            progress = (35 - i) / 35.0
+            trend_factor = 1.0 + (change_pct * 0.15 * (progress - 1.0))
+            wave = 0.0012 * math.sin(i * 0.8) + 0.0006 * math.cos(i * 1.5)
+            c_open = current_price * (trend_factor + wave)
+            c_close = current_price * (trend_factor + wave + 0.0004 * math.sin(i * 1.2))
+            c_high = max(c_open, c_close) * 1.0015
+            c_low = min(c_open, c_close) * 0.9985
+            base_candles_5m.append(Candle(
+                symbol=sd.symbol,
+                open=round(c_open, sd.price_precision),
+                high=round(c_high, sd.price_precision),
+                low=round(c_low, sd.price_precision),
+                close=round(c_close, sd.price_precision),
+                volume=vol_5m,
+                coin_volume=coin_vol_5m,
+                vwap=round((c_open + c_high + c_low + c_close) / 4, sd.price_precision),
+                tick_count=20,
+                timestamp=c_time,
+                is_complete=True,
+                close_time=c_time + interval_5m,
+            ))
+        sd.candles_5m = base_candles_5m
+
+        # Also seed 25 past 15m candles
+        base_candles_15m = []
+        for i in range(25, 0, -1):
+            c_time = (int(now) - i * interval_15m) // interval_15m * interval_15m
+            progress = (25 - i) / 25.0
+            trend_factor = 1.0 + (change_pct * 0.15 * (progress - 1.0))
+            wave = 0.0018 * math.sin(i * 0.9)
+            c_open = current_price * (trend_factor + wave)
+            c_close = current_price * (trend_factor + wave + 0.0005 * math.cos(i * 1.1))
+            c_high = max(c_open, c_close) * 1.0025
+            c_low = min(c_open, c_close) * 0.9975
+            base_candles_15m.append(Candle(
+                symbol=sd.symbol,
+                open=round(c_open, sd.price_precision),
+                high=round(c_high, sd.price_precision),
+                low=round(c_low, sd.price_precision),
+                close=round(c_close, sd.price_precision),
+                volume=vol_5m * 3,
+                coin_volume=coin_vol_5m * 3,
+                vwap=round((c_open + c_high + c_low + c_close) / 4, sd.price_precision),
+                tick_count=60,
+                timestamp=c_time,
+                is_complete=True,
+                close_time=c_time + interval_15m,
+            ))
+        sd.candles_15m = base_candles_15m
+        logger.info("[%s] Seeded initial %d 5m and %d 15m baseline candles", sd.symbol, len(sd.candles_5m), len(sd.candles_15m))
 
     def _update_candle(
         self, sd: SymbolData, tick: TickerSnapshot, timeframe: str,

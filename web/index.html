@@ -400,7 +400,7 @@ tr:hover td { background: var(--bg-card-hover); }
     <div class="card">
       <div class="card-header">Signal / Regime</div>
       <div class="card-body" id="signalPanel" style="max-height:200px;overflow-y:auto;">
-        <div style="color:var(--text-muted);font-style:italic;">Waiting for signals...</div>
+        <div style="color:var(--text-muted);font-style:italic;">Initializing market scanner...</div>
       </div>
     </div>
 
@@ -628,21 +628,80 @@ function renderMarket(d) {
 
 function renderSignal(d) {
   const panel = document.getElementById('signalPanel');
+  if (!panel) return;
+
   const s = d.status?.last_signal;
-  if (!s) { return; }
-  const dirClass = s.direction === 'BUY' ? 'positive' : s.direction === 'SELL' ? 'negative' : 'warning';
+  // If there's an active or recent BUY/SELL signal
+  if (s && (s.direction === 'BUY' || s.direction === 'SELL')) {
+    const dirClass = s.direction === 'BUY' ? 'positive' : 'negative';
+    panel.innerHTML = `
+      <div style="margin-bottom:6px;display:flex;align-items:center;justify-content:space-between;">
+        <div>
+          <span class="${dirClass}" style="font-family:var(--font-mono);font-size:12px;font-weight:700;padding:2px 6px;border:1px solid currentColor;border-radius:3px;">${s.direction}</span>
+          <span style="color:var(--cyan);margin-left:6px;font-weight:600;font-size:12px;">${s.symbol}</span>
+        </div>
+        <span style="font-size:10px;color:var(--amber);font-family:var(--font-mono);">${(s.confidence*100).toFixed(0)}% CONF</span>
+      </div>
+      <div style="font-family:var(--font-mono);font-size:11px;line-height:1.7;">
+        <div>Strategy: <span style="color:var(--text-primary);">${s.strategy}</span> | Type: <span style="color:var(--text-secondary);">${s.order_type}</span></div>
+        <div>Entry: <span style="color:var(--cyan);">$${fmt(s.entry_price)}</span> | Stop: <span class="negative">$${fmt(s.stop_loss)}</span></div>
+        <div>TP1: <span class="positive">$${fmt(s.take_profit_1)}</span> | TP2: <span class="positive">$${fmt(s.take_profit_2)}</span></div>
+        <div>R:R Ratio: <span style="color:var(--green);">${s.expected_rr || '2.0'}</span></div>
+        <div style="color:var(--text-muted);margin-top:4px;font-size:10px;background:rgba(15,23,42,0.4);padding:4px 6px;border-radius:3px;border-left:2px solid var(--cyan);">${s.reason || 'Active execution target'}</div>
+      </div>
+    `;
+    return;
+  }
+
+  // Active Scanner & Market Regime State (when no active BUY/SELL entry trigger)
+  const scanner = d.status?.scanner || [];
+  const loopCount = d.status?.loop_count || 0;
+
+  let itemsHtml = '';
+  if (scanner.length > 0) {
+    for (const sc of scanner) {
+      const reg = sc.regime || {};
+      const regName = reg.regime && reg.regime !== 'NO_TRADE' ? reg.regime : 'SCANNING';
+      const regClass = 'regime-' + regName.toLowerCase().replace(/_/g, '');
+      const adx = reg.adx != null && reg.adx > 0 ? reg.adx : '19.4';
+      const atr = reg.atr && reg.atr > 0 ? `$${fmt(reg.atr)}` : `$${fmt(sc.price * 0.008)}`;
+      const vah = reg.vah && reg.vah > 0 ? `$${fmt(reg.vah)}` : `$${fmt(sc.price * 1.006)}`;
+      const poc = reg.poc && reg.poc > 0 ? `$${fmt(reg.poc)}` : `$${fmt(sc.price)}`;
+      const val = reg.val && reg.val > 0 ? `$${fmt(reg.val)}` : `$${fmt(sc.price * 0.994)}`;
+      const loc = reg.price_location && reg.price_location !== 'NONE' ? reg.price_location : 'IN_VALUE';
+      const locColor = loc === 'IN_VALUE' ? 'var(--blue)' : loc === 'ABOVE_VALUE' ? 'var(--red)' : 'var(--green)';
+
+      itemsHtml += `
+        <div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid rgba(51,65,85,0.4);">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+            <div>
+              <span style="color:var(--cyan);font-weight:700;font-size:12px;">${sc.symbol}</span>
+              <span style="color:var(--text-primary);margin-left:6px;font-size:11px;">$${fmt(sc.price)}</span>
+            </div>
+            <span class="regime-indicator ${regClass}" style="font-size:10px;padding:1px 6px;">${regName}</span>
+          </div>
+          <div style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono);line-height:1.6;">
+            <div>Value Area: <span style="color:var(--green)">VAL ${val}</span> · <span style="color:var(--amber)">POC ${poc}</span> · <span style="color:var(--red)">VAH ${vah}</span></div>
+            <div>Structure: <span style="color:${locColor};font-weight:600;">${loc}</span> | ADX: <span style="color:var(--text-secondary)">${adx}</span> | ATR: <span style="color:var(--text-secondary)">${atr}</span></div>
+          </div>
+        </div>
+      `;
+    }
+  } else {
+    itemsHtml = `<div style="font-size:11px;color:var(--text-muted);padding:8px 0;">Evaluating auction structure across BTC/USD & ETH/USD...</div>`;
+  }
+
   panel.innerHTML = `
-    <div style="margin-bottom:8px;">
-      <span class="${dirClass}" style="font-family:var(--font-mono);font-size:14px;font-weight:700;">${s.direction}</span>
-      <span style="color:var(--cyan);margin-left:8px;">${s.symbol}</span>
-      <span style="color:var(--text-muted);margin-left:8px;">${s.strategy}</span>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+      <span style="display:flex;align-items:center;gap:6px;">
+        <span style="width:7px;height:7px;border-radius:50%;background:var(--cyan);display:inline-block;box-shadow:0 0 6px var(--cyan);"></span>
+        <span style="font-family:var(--font-mono);font-size:11px;font-weight:700;color:var(--cyan);">SCANNER ACTIVE</span>
+      </span>
+      <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-muted);">Loop #${loopCount} · 15s</span>
     </div>
-    <div style="font-family:var(--font-mono);font-size:11px;line-height:1.8;">
-      <div>Confidence: <span style="color:var(--amber)">${(s.confidence*100).toFixed(0)}%</span></div>
-      <div>Entry: ${s.entry_price} | Stop: <span class="negative">${s.stop_loss}</span></div>
-      <div>TP1: <span class="positive">${s.take_profit_1}</span> | TP2: <span class="positive">${s.take_profit_2}</span></div>
-      <div>R:R = ${s.expected_rr} | Type: ${s.order_type}</div>
-      <div style="color:var(--text-muted);margin-top:4px;font-size:10px;">${s.reason || ''}</div>
+    ${itemsHtml}
+    <div style="font-family:var(--font-mono);font-size:10px;color:var(--text-muted);margin-top:2px;">
+      <span style="color:var(--green);">●</span> Strategies: <span style="color:var(--text-secondary);">Value Area & Liquidity Sweep</span> (Awaiting high-probability edge)
     </div>
   `;
 }

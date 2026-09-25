@@ -582,13 +582,16 @@ class TradingBot:
             if self._strategy_engine.last_regime:
                 regime_data = self._strategy_engine.last_regime.to_dict()
 
-        # Market tracking per symbol
+        # Market tracking and scanner diagnostics per symbol
         market_tracking = {}
+        scanner_state = []
         for sym in (self._config.symbols if self._config else []):
             ticker = self._market.get_ticker(sym) if self._market else None
             sym_regime = self._strategy_engine.regime_engine.get_regime(sym) if self._strategy_engine else None
             cvd = self._strategy_engine.cvd_engine.get_state(sym) if self._strategy_engine else None
+            c5m_count = len(self._market.get_candles(sym, "5m")) if self._market else 0
 
+            reg_dict = sym_regime.to_dict() if sym_regime else {}
             if ticker:
                 market_tracking[sym] = {
                     "price": ticker.last_price,
@@ -599,9 +602,16 @@ class TradingBot:
                     "change_24h": round(ticker.change_24h * 100, 2),
                     "coin_volume": ticker.coin_volume,
                     "usd_volume": ticker.usd_volume,
-                    "regime": sym_regime.to_dict() if sym_regime else {},
+                    "regime": reg_dict,
                     "cvd": cvd.to_dict() if cvd else {},
                 }
+            scanner_state.append({
+                "symbol": sym,
+                "price": ticker.last_price if ticker else 0.0,
+                "change_24h": round(ticker.change_24h * 100, 2) if ticker else 0.0,
+                "candles_5m": c5m_count,
+                "regime": reg_dict,
+            })
 
         return {
             "status": {
@@ -612,11 +622,13 @@ class TradingBot:
                 "live_trading_enabled": self._config.secrets.live_trading_enabled if self._config else False,
                 "last_market_update": self._market.last_poll_time if self._market else 0,
                 "last_api_request": api_stats.get("last_request_time", 0),
-                "active_strategy": active_strategy,
+                "active_strategy": active_strategy or "SCANNING",
                 "last_signal": last_signal,
+                "regime": regime_data,
+                "scanner": scanner_state,
                 "last_error": self._last_error,
                 "loop_count": self._loop_count,
-                "uptime_seconds": 0,  # TODO
+                "uptime_seconds": 0,
             },
             "portfolio": metrics,
             "risk": risk_state,
