@@ -360,6 +360,13 @@ class PortfolioTracker:
                     pos.update_price(prices[symbol])
             self._update_equity()
 
+    def update_stop_loss(self, symbol: str, new_stop: float) -> None:
+        """Update stop loss price for a position (trailing/ratcheting)."""
+        with self._lock:
+            pos = self._positions.get(symbol)
+            if pos:
+                pos.stop_loss = new_stop
+
     # =======================================================================
     # Equity / Performance
     # =======================================================================

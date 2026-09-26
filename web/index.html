@@ -379,7 +379,7 @@ tr:hover td { background: var(--bg-card-hover); }
       </div>
       <div class="card-body" style="max-height:240px;overflow-y:auto;">
         <table>
-          <thead><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Entry</th><th>Current</th><th>P&L</th><th>Strategy</th></tr></thead>
+          <thead><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Entry</th><th>Current</th><th>P&L</th><th>AutoSL & Trailing</th></tr></thead>
           <tbody id="positionsTable"></tbody>
         </table>
       </div>
@@ -590,14 +590,29 @@ function renderPositions(d) {
   let html = '';
   for (const p of pos) {
     const pnlClass = (p.unrealized_pnl || 0) >= 0 ? 'positive' : 'negative';
+    const autosl = p.autosl || {};
+    const slPrice = autosl.stop_loss_price || p.stop_loss || 0;
+    const slBadge = autosl.trailing_sl_active
+      ? `<span style="color:var(--green);font-size:10px;font-family:var(--font-mono);">TRAIL $${fmt(slPrice)}</span>`
+      : `<span style="color:var(--text-muted);font-size:10px;font-family:var(--font-mono);">SL $${fmt(slPrice)}</span>`;
+    const phaseBadge = autosl.validation_survived
+      ? `<span class="regime-indicator regime-range" style="font-size:9px;padding:1px 4px;">PHASE 2</span>`
+      : `<span class="regime-indicator regime-transition" style="font-size:9px;padding:1px 4px;">PHASE 1</span>`;
+    const momBadge = autosl.momentum_status && autosl.momentum_status !== 'NORMAL'
+      ? `<span style="color:var(--cyan);font-size:9px;margin-left:4px;font-weight:600;">${autosl.momentum_status}</span>`
+      : '';
+    const lockedInfo = autosl.locked_profit > 0
+      ? `<div style="font-size:9px;color:var(--green);">Locked: +$${fmt(autosl.locked_profit)}</div>`
+      : '';
+
     html += `<tr>
-      <td>${p.symbol}</td>
+      <td>${p.symbol} ${phaseBadge}</td>
       <td>${p.side}</td>
       <td>${p.quantity}</td>
-      <td>${p.avg_entry}</td>
-      <td>${p.current_price}</td>
+      <td>$${fmt(p.avg_entry)}</td>
+      <td>$${fmt(p.current_price)}</td>
       <td class="${pnlClass}">$${fmt(p.unrealized_pnl)}</td>
-      <td>${p.strategy || '—'}</td>
+      <td>${slBadge} ${momBadge} ${lockedInfo}</td>
     </tr>`;
   }
   if (!pos.length) html = '<tr><td colspan="7" style="color:var(--text-muted);text-align:center;">No open positions</td></tr>';

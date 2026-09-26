@@ -493,6 +493,54 @@ class OrderExecutor:
             logger.error("Cancel all failed: %s", exc)
             return 0
 
+    def close_spot(
+        self, symbol: str, quantity: float,
+    ) -> Optional[ManagedOrder]:
+        """Close a spot long position via market sell."""
+        quantity = self._round_quantity(symbol, quantity)
+        if quantity <= 0:
+            return None
+
+        order = ManagedOrder(
+            symbol=symbol,
+            side="SELL",
+            order_type="MARKET",
+            quantity=quantity,
+            state=OrderState.PENDING_SUBMIT,
+            submit_time=time.time(),
+        )
+
+        try:
+            resp = self._api.place_order(
+                pair=symbol,
+                side="SELL",
+                order_type="MARKET",
+                quantity=quantity,
+            )
+            if resp.success:
+                data = resp.data
+                order.order_id = data.get("ID")
+                order.state = OrderState.FILLED
+                order.filled_price = data.get("FilledAverPrice", 0.0)
+                order.filled_quantity = data.get("FilledQuantity", quantity)
+                order.commission = data.get("CommissionChargeValue", 0.0)
+                order.role = "TAKER"
+                order.fill_time = time.time()
+
+                with self._lock:
+                    self._completed_orders.append(order)
+
+                logger.info("Spot position closed: %s qty=%s at %s", symbol, quantity, order.filled_price)
+                return order
+            else:
+                order.state = OrderState.FAILED
+                logger.error("Spot close rejected: %s", resp.error_message)
+                return order
+        except APIError as exc:
+            order.state = OrderState.FAILED
+            logger.error("Spot close failed: %s", exc)
+            return order
+
     def close_short(
         self, symbol: str, close_pct: Optional[float] = None,
     ) -> Optional[ManagedOrder]:

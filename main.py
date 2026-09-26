@@ -33,6 +33,8 @@ from core.web_server import DashboardServer
 from logs.audit_logger import AuditLogger, EventType
 from state.portfolio_tracker import PortfolioTracker
 from strategies.base import SignalDirection
+from core.autosl_engine import AutoSLExitEngine, CryptoPosition
+from datetime import datetime, timezone
 
 
 # ---------------------------------------------------------------------------
@@ -204,6 +206,8 @@ class TradingBot:
         self._portfolio: Optional[PortfolioTracker] = None
         self._dashboard: Optional[DashboardServer] = None
         self._audit: Optional[AuditLogger] = None
+        self._autosl_engine = AutoSLExitEngine()
+        self._autosl_positions: Dict[str, CryptoPosition] = {}
 
         self._loop_count: int = 0
         self._last_error: str = ""
@@ -409,6 +413,9 @@ class TradingBot:
                             )
                         self._audit.record(EventType.ORDER_FILLED, order.to_dict())
 
+                # 3b. Evaluate active positions with AutoSL Engine (Trailing SL & Breakout Invalidation)
+                self._check_autosl_exits()
+
                 # 4. Periodic reconciliation & time sync
                 now = time.time()
                 if now - last_reconcile > reconcile_interval:
@@ -524,6 +531,133 @@ class TradingBot:
             if order:
                 self._audit.record(EventType.ORDER_SUBMITTED, order.to_dict())
 
+    def _check_autosl_exits(self) -> None:
+        """
+        Evaluate active positions using AutoSLExitEngine:
+        1. Phase 1 Breakout Failed Exit (confluence invalidation during first N candles)
+        2. Dual-Layer Trailing Stop Loss (Hard exchange stop + Soft dynamic tiered SL)
+        3. Fast Momentum Extension & Profit Ratchet
+        """
+        if not self._portfolio or not self._executor:
+            return
+
+        positions = self._portfolio.get_positions()
+        active_symbols = set()
+
+        for pos in positions:
+            symbol = pos.get("symbol")
+            if not symbol:
+                continue
+            active_symbols.add(symbol)
+
+            # Ensure position is tracked in AutoSL engine
+            c_pos = self._autosl_positions.get(symbol)
+            if c_pos is None or c_pos.status == "CLOSED":
+                entry_ts = pos.get("entry_time") or time.time()
+                dt_entry = datetime.fromtimestamp(entry_ts, tz=timezone.utc)
+                c_pos = CryptoPosition(
+                    position_id=f"{symbol}_{int(entry_ts)}",
+                    symbol=symbol,
+                    side="BUY" if pos.get("side") == "LONG" else "SELL",
+                    quantity=pos.get("quantity", 0.0),
+                    entry_price=pos.get("avg_entry", 0.0),
+                    entry_time=dt_entry,
+                    entry_breakout_level=pos.get("avg_entry", 0.0),
+                    initial_stop_loss=pos.get("stop_loss", 0.0),
+                    stop_loss_price=pos.get("stop_loss", 0.0),
+                    take_profit_price=pos.get("take_profit_1", 0.0),
+                    broker_sl_price=pos.get("stop_loss", 0.0),
+                    sl_percent=1.5,
+                    strategy=pos.get("strategy", ""),
+                    peak_price=pos.get("highest_price", pos.get("avg_entry", 0.0)),
+                )
+                self._autosl_positions[symbol] = c_pos
+
+            # Update quantity & price
+            c_pos.quantity = pos.get("quantity", c_pos.quantity)
+            current_price = pos.get("current_price", c_pos.entry_price)
+
+            # Gather candle and volume context
+            ticker = self._market.get_ticker(symbol) if self._market else None
+            candles_5m = self._market.get_candles(symbol, "5m") if self._market else []
+            prev_vol = candles_5m[-1].volume if len(candles_5m) >= 1 else 0.0
+            prev_prev_vol = candles_5m[-2].volume if len(candles_5m) >= 2 else 0.0
+            curr_vol = ticker.usd_volume if ticker else 0.0
+
+            recent_high = max([c.high for c in candles_5m[-10:]]) if candles_5m else (current_price * 1.01)
+            recent_low = min([c.low for c in candles_5m[-10:]]) if candles_5m else (current_price * 0.99)
+
+            # Run AutoSL on_tick
+            exit_reason, trigger_price = self._autosl_engine.on_tick(
+                pos=c_pos,
+                current_price=current_price,
+                current_candle_vol=curr_vol,
+                prev_completed_vol=prev_vol,
+                prev_prev_completed_vol=prev_prev_vol,
+                recent_market_high=recent_high,
+                recent_market_low=recent_low,
+            )
+
+            # Update portfolio stop loss if ratcheted
+            if c_pos.stop_loss_price != pos.get("stop_loss") and c_pos.stop_loss_price > 0:
+                self._portfolio.update_stop_loss(symbol, c_pos.stop_loss_price)
+
+            # Handle Exit Execution
+            if exit_reason:
+                logger.warning(
+                    "[AUTOSL EXIT] Initiating %s for %s at %.2f (Entry: %.2f, Peak: %.2f, Locked: $%.2f)",
+                    exit_reason, symbol, trigger_price or current_price,
+                    c_pos.entry_price, c_pos.peak_price, c_pos.locked_profit,
+                )
+                self._audit.record(EventType.POSITION_CLOSED, {
+                    "symbol": symbol,
+                    "side": pos.get("side"),
+                    "exit_reason": exit_reason,
+                    "trigger_price": trigger_price,
+                    "current_price": current_price,
+                    "entry_price": c_pos.entry_price,
+                    "peak_price": c_pos.peak_price,
+                    "locked_profit": c_pos.locked_profit,
+                    "momentum_status": c_pos.momentum_status,
+                })
+
+                if self._mode == "DRY_RUN":
+                    # In dry run, simulate immediate fill and record in portfolio
+                    pnl = (current_price - c_pos.entry_price) * c_pos.quantity if c_pos.is_long() else (c_pos.entry_price - current_price) * c_pos.quantity
+                    comm = current_price * c_pos.quantity * 0.001
+                    if c_pos.is_long():
+                        self._portfolio.record_fill(
+                            symbol=symbol,
+                            side="SELL",
+                            quantity=c_pos.quantity,
+                            price=current_price,
+                            commission=comm,
+                            strategy=c_pos.strategy,
+                        )
+                    else:
+                        self._portfolio.record_short_fill(
+                            symbol=symbol,
+                            action="CLOSE",
+                            quantity=c_pos.quantity,
+                            price=current_price,
+                            commission=comm,
+                            realized_pnl=pnl - comm,
+                            strategy=c_pos.strategy,
+                        )
+                else:
+                    # LIVE mode: submit immediate market close order
+                    if c_pos.is_long():
+                        self._executor.close_spot(symbol, c_pos.quantity)
+                    else:
+                        self._executor.close_short(symbol)
+
+                c_pos.status = "CLOSED"
+
+        # Clean up closed symbols
+        for sym in list(self._autosl_positions.keys()):
+            if sym not in active_symbols:
+                del self._autosl_positions[sym]
+
     # =======================================================================
     # Shutdown
     # =======================================================================
@@ -632,7 +766,14 @@ class TradingBot:
             },
             "portfolio": metrics,
             "risk": risk_state,
-            "positions": self._portfolio.get_positions() if self._portfolio else [],
+            "positions": [
+                {
+                    **p,
+                    "autosl": self._autosl_positions[p["symbol"]].to_dict()
+                    if p["symbol"] in self._autosl_positions else None,
+                }
+                for p in (self._portfolio.get_positions() if self._portfolio else [])
+            ],
             "market": market_tracking,
             "api_stats": api_stats,
             "data_status": data_status,
