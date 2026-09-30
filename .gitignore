@@ -38,6 +38,8 @@ logs/*.jsonl
 # State persistence
 state/*.json
 state/*.db
+state/*.pid
+*.pid
 !state/__init__.py
 !state/portfolio_tracker.py
 

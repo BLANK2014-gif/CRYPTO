@@ -78,7 +78,7 @@ class DashboardServer:
 
     def _verify_auth(self, authorization: Optional[str] = None) -> bool:
         """Verify bearer token."""
-        if not self._auth_token:
+        if not self._auth_token or self._auth_token == "your_secure_dashboard_token_here":
             return True  # No auth configured
         if not authorization:
             return False
@@ -120,7 +120,7 @@ class DashboardServer:
             """WebSocket telemetry stream (~1 update/second)."""
             # Auth check via query param or first message
             token = websocket.query_params.get("token", "")
-            if self._auth_token and token != self._auth_token:
+            if self._auth_token and self._auth_token != "your_secure_dashboard_token_here" and token != self._auth_token:
                 await websocket.close(code=1008, reason="Unauthorized")
                 return
 
